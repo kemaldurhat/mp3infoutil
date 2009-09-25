@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Application xmlns:mx="http://www.adobe.com/2006/mxml" layout="vertical" creationComplete="init()">
+	<mx:Script>
+		<![CDATA[
+			import mx.utils.ObjectUtil;
+			
+			import com.fastforwardthinker.util.mp3.events.MP3InfoEvent;
+			import com.fastforwardthinker.util.mp3.MP3InfoUtil;
+			
+			private function init():void
+			{
+	
+				MP3InfoUtil.addEventListener(MP3InfoEvent.COMPLETE, onMP3InfoComplete );
+				MP3InfoUtil.addEventListener(MP3InfoEvent.ERROR, onMP3InfoError );
+				
+			}
+			private function _onSubmitClick( url:String ):void
+			{
+				MP3InfoUtil.getInfo( url );
+			}
+			public function onMP3InfoComplete( event:MP3InfoEvent ):void
+			{
+				output.text = '';
+				for( var key:String in event.info )
+					output.text += key + ": " + event.info[key] + '\n';
+			}
+	
+			public function onMP3InfoError( event:MP3InfoEvent ):void
+			{
+				output.text = ObjectUtil.toString( event );
+			}
+			
+			
+		]]>
+	</mx:Script>
+	
+	<mx:FormItem label="URL" width="100%" labelWidth="100">
+		<mx:TextInput id="urlInput" width="100%" text="http://www.example.com/my.mp3"/>
+		<mx:Button label="Analyze MP3:" click="_onSubmitClick(urlInput.text)"/>
+	</mx:FormItem>
+	<mx:FormItem label="Result:" width="100%" labelWidth="100" height="100%">
+		<mx:TextArea id="output" width="100%" height="100%"/>
+	</mx:FormItem>
+	
+</mx:Application>

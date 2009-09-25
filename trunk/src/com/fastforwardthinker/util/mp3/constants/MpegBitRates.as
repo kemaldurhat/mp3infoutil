@@ -30,6 +30,7 @@ package com.fastforwardthinker.util.mp3.constants
 	 */	
 	public class MpegBitRates
 	{
+
 		public static const Kbps_8:int =  8;
 		public static const Kbps_16:int = 16;
 		public static const Kbps_24:int = 24;
@@ -55,20 +56,18 @@ package com.fastforwardthinker.util.mp3.constants
 		public static const Kbps_416:int = 416;
 		public static const Kbps_448:int = 448; 
 		
-		static public function toArray():Array
-		{
-			return [
-					    [ // MPEG 2 & 2.5
-					        [0,  8, 16, 24, 32, 40, 48, 56, 64, 80, 96,112,128,144,160,0], // Layer III
-					        [0,  8, 16, 24, 32, 40, 48, 56, 64, 80, 96,112,128,144,160,0], // Layer II
-					        [0, 32, 48, 56, 64, 80, 96,112,128,144,160,176,192,224,256,0]  // Layer I
-					    ],
-					    [ // MPEG 1
-					        [0, 32, 40, 48, 56, 64, 80, 96,112,128,160,192,224,256,320,0], // Layer III
-					        [0, 32, 48, 56, 64, 80, 96,112,128,160,192,224,256,320,384,0], // Layer II
-					        [0, 32, 64, 96,128,160,192,224,256,288,320,352,384,416,448,0]  // Layer I
-					    ]
-   					];
-		}
+		public static const list:Array = [
+											    [ // MPEG 2 & 2.5
+											        [0,  8, 16, 24, 32, 40, 48, 56, 64, 80, 96,112,128,144,160,0], // Layer III
+											        [0,  8, 16, 24, 32, 40, 48, 56, 64, 80, 96,112,128,144,160,0], // Layer II
+											        [0, 32, 48, 56, 64, 80, 96,112,128,144,160,176,192,224,256,0]  // Layer I
+											    ],
+											    [ // MPEG 1
+											        [0, 32, 40, 48, 56, 64, 80, 96,112,128,160,192,224,256,320,0], // Layer III
+											        [0, 32, 48, 56, 64, 80, 96,112,128,160,192,224,256,320,384,0], // Layer II
+											        [0, 32, 64, 96,128,160,192,224,256,288,320,352,384,416,448,0]  // Layer I
+											    ]
+					   					 ];
+
 	}
 }
