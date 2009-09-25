@@ -1,13 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <flexLibProperties version="1">
 <includeClasses>
-<classEntry path="com.fastforwardthinker.util.mp3.MP3InfoUtil"/>
-<classEntry path="com.fastforwardthinker.util.mp3.constants.MpegBitRates"/>
 <classEntry path="com.fastforwardthinker.util.mp3.constants.MpegChannelModes"/>
-<classEntry path="com.fastforwardthinker.util.mp3.constants.MpegSampleRates"/>
+<classEntry path="com.fastforwardthinker.util.mp3.constants.MpegBitRates"/>
 <classEntry path="com.fastforwardthinker.util.mp3.constants.MpegVersions"/>
-<classEntry path="com.fastforwardthinker.util.mp3.interfaces.IMP3Responder"/>
-<classEntry path="com.fastforwardthinker.util.mp3.vo.MP3InfoVO"/>
+<classEntry path="com.fastforwardthinker.util.mp3.constants.MpegSampleRates"/>
+<classEntry path="com.fastforwardthinker.util.mp3.events.MP3InfoEvent"/>
+<classEntry path="com.fastforwardthinker.util.mp3.MP3InfoUtil"/>
 </includeClasses>
 <includeResources/>
 <namespaceManifests/>

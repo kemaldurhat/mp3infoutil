@@ -50,12 +50,16 @@ package com.fastforwardthinker.util.mp3
 	 * 
 	 */	
 
-	import com.fastforwardthinker.util.mp3.vo.MP3InfoVO;
-	import com.fastforwardthinker.util.mp3.interfaces.IMP3Responder; 
-	import com.fastforwardthinker.util.mp3.constants.MpegChannelModes;
 	import com.fastforwardthinker.util.mp3.constants.MpegBitRates;
-	import com.fastforwardthinker.util.mp3.constants.MpegVersions;
+	import com.fastforwardthinker.util.mp3.constants.MpegChannelModes;
 	import com.fastforwardthinker.util.mp3.constants.MpegSampleRates;
+	import com.fastforwardthinker.util.mp3.constants.MpegVersions;
+	import com.fastforwardthinker.util.mp3.events.MP3InfoEvent;
+	
+	import flash.errors.IOError;
+	import flash.events.Event;
+	import flash.events.EventDispatcher;
+	import flash.events.HTTPStatusEvent;
 	import flash.events.IOErrorEvent;
 	import flash.events.ProgressEvent;
 	import flash.events.SecurityErrorEvent;
@@ -63,27 +67,15 @@ package com.fastforwardthinker.util.mp3
 	import flash.net.URLStream;
 	import flash.utils.ByteArray;
 	
+	import mx.rpc.IResponder;
+	
+	[Event(name="complete",type="com.fastforwardthinker.util.mp3.events.MP3InfoEvent")]
+	[Event(name="error",type="com.fastforwardthinker.util.mp3.events.MP3InfoEvent")]
 	
 	public class MP3InfoUtil
 	{
+
 		
-		//------------------
-		// PRIVATE CONSTANTS
-		//------------------
-		
- 		/**
-	     * Stores a reference table of mpeg bitrates
-	     */
-		static private const MPEG_BITRATES:Array =  MpegBitRates.toArray();
-		/**
-	     * Stores a reference table of mpeg versions
-	     */                            				
-	    static private const MPEG_VERSIONS:Array = MpegVersions.toArray();
-	    /**
-	     * Stores a reference table of sample rates
-	     */  
-	   	static private const MPEG_SAMPLE_RATES:Array = MpegSampleRates.toArray();
-	   	
 	    //------------------
 		// PRIVATE VARIABLES
 		//------------------
@@ -92,12 +84,12 @@ package com.fastforwardthinker.util.mp3
 	     * Holds the mpeg file header on which analysis 
 	     * will be performed
 	     */
-	    static private var _bitHeader:uint;
+	    static private var _currentChunk:uint;
 	    /**
 	     * Flag which stores whether or not the mpeg
 	     * employs variable bit rate encoding
 	     */
-	    static private var _isVarBitRate:Boolean;
+	    static private var _isCBR:Boolean;
 	    /**
 	     * Holds the number of frames of variable bit rate 
 	     * mpeg files
@@ -115,14 +107,16 @@ package com.fastforwardthinker.util.mp3
 	     * Class implementing the IResponder interface 
 	     * to which the result or fault are returned
 	     */ 
-		static private var _responder:IMP3Responder;
+		static private var _responder:IResponder;
 		/**
-	     * Holds a list of property names to be returned
-	     * to the responder
+	     * Holds the url to the mp3
 	     */ 
-		static private var _props:Array;
-		
-		
+		static private var _url:String;
+		/**
+	     * Disptaches events from this static class
+	     */ 
+		static private var _dispatcher:EventDispatcher;
+
 		//------------------
 		// PUBLIC METHODS
 		//------------------
@@ -141,52 +135,33 @@ package com.fastforwardthinker.util.mp3
 		 * 
 		 * @param url the path to the mpeg file to load and analyze. 
 		 * 
-		 * @param responder the calling class which implements the 
-		 * IMP3Responder interface to which the result (or fault) 
-		 * will be returned. 
+		 * @param responder the optional class instance which implements the 
+		 * IResponder interface to which the result (or fault) will be returned. 
 		 * 
-		 * @see com.fastforwardthinker.util.mp3.interfaces.IMP3Responder
 		 */
-		public static function getInfo( url:String, responder:IMP3Responder ):void
+		public static function getInfo( url:String, responder:IResponder=null ):void
 		{
-			// set the responder
 			_responder = responder;
 			
-			// ensure the url is not empty
-			if( !url || url=='' )
-			{
-				_responder.onMP3InfoFault( 'Error! URL must not be empty!' );
-				return;
+			if( url == null || url == '' ){
+				handleError( new Error('URL is undefined') );
 			}
 			
-			// load the file	
-			load( url );
+			_url = url;
+			
+			_loader = new URLStream();
+			_loader.addEventListener(IOErrorEvent.IO_ERROR, handleError);
+			_loader.addEventListener(ProgressEvent.PROGRESS, onLoadProgress)
+			_loader.addEventListener(SecurityErrorEvent.SECURITY_ERROR, handleError)
+			_loader.load( new URLRequest( url ) );
 		}
 		
+		
+      	
 		//------------------
 		// INTERNAL METHODS
 		//------------------
 		
-		
-		/**
-		 * 
-		 * Adds listeners to the URLStream and begins
-		 * loading the mpeg file
-		 * 
-		 * @param url to the mpeg file to analyze
-		 * 
-		 */			 				                          
-		internal static function load( url:String ):void
-		{
-			// add listeners
-			_loader = new URLStream();
-			_loader.addEventListener(IOErrorEvent.IO_ERROR, onError);
-			_loader.addEventListener(ProgressEvent.PROGRESS, onLoadProgress)
-			_loader.addEventListener(SecurityErrorEvent.SECURITY_ERROR, onError)
-			
-			// Load the mp3
-			_loader.load( new URLRequest(url) );
-		}
 		/**
 		 * 
 		 * Handles the loading progress of the URLStream 
@@ -196,41 +171,54 @@ package com.fastforwardthinker.util.mp3
 		 */	
 		internal static function onLoadProgress( event:ProgressEvent ):void
 		{
-			// 48 bytes is all the data required to perform analysis 
-			if( event.bytesLoaded >= 48 ) 
-			{
-				// read the bytes into a byte array
-				var ba:ByteArray = new ByteArray();
-				_loader.readBytes(ba, 0, 48)
+			
+			if( event.bytesLoaded < 48 )  
+				return; // you have a realllly slow connection! wait for more data.
 				
-				// set the lenth in bytes
-				_lenBytes = event.bytesTotal;
+			var ba:ByteArray = new ByteArray();
+			_loader.readBytes(ba, 0, 48)
+			_lenBytes = event.bytesTotal;
 				
-				// process the result
-				var result:MP3InfoVO = analyze( ba );
+			destroyLoader();
+				
+			var result:Object = analyze( ba );
+				
+			if( result == null ) // threw and caught an exception
+				return;
+				
+			if( _responder != null )
+				_responder.result( result );
 					
-				// return result to responder
-				_responder.onMP3InfoResult( result );
-				
-				// kill the loader
-				destroyLoader();
-			}
+			dispatchEvent( new MP3InfoEvent(MP3InfoEvent.COMPLETE, result ) );
 		}
 		/**
 		 * 
-		 * Handles exceptions from the URLLoader and 
-		 * returns the event to the faultHandler method
-		 * if one was supplied to the public getInfo() 
-		 * function
+		 * Handles errors for the class
 		 * 
-		 * @param info the error object or fault event
+		 * @param errorEvent the error object or fault event
 		 * 
 		 */	
-		internal static function onError( info:* ):void
+		internal static function handleError( e:*, info:Object = null ):void
 		{
-			// return faults to the responder
-			_responder.onMP3InfoFault( info )
 			destroyLoader();
+			
+			if( !info ) 
+				info = {};
+			
+			info.url = _url;
+			
+			if( e is Event )
+				info[e.type] = e;
+	
+			if( e is Error )
+				info.message = e.message;
+					
+			dispatchEvent( new MP3InfoEvent( MP3InfoEvent.ERROR, info ) );
+			
+			if( _responder != null )
+				_responder.fault( info );
+
+			
 		}
 		/**
 		 * Destroys the URLStream once enough data has
@@ -240,10 +228,12 @@ package com.fastforwardthinker.util.mp3
 		 */	
 		internal static function destroyLoader():void
 		{
-			// tear down the loader
-			_loader.removeEventListener(IOErrorEvent.IO_ERROR, onError);
+			if( _loader == null )
+				return;
+				
+			_loader.removeEventListener(IOErrorEvent.IO_ERROR, handleError);
 			_loader.removeEventListener(ProgressEvent.PROGRESS, onLoadProgress)
-			_loader.removeEventListener(SecurityErrorEvent.SECURITY_ERROR, onError)
+			_loader.removeEventListener(SecurityErrorEvent.SECURITY_ERROR, handleError)
 			_loader.close();
 			_loader = null; 
 		}
@@ -257,92 +247,80 @@ package com.fastforwardthinker.util.mp3
 	     * @return MP3InfoVO value object containg the results
 	     * 
 	     */	
-	    internal static function analyze( ba:ByteArray ):MP3InfoVO
+	    internal static function analyze( bytes:ByteArray ):Object
 	    {
-			// Raw header of CBR mepgs
-	        var bytHeader:ByteArray = new ByteArray();
-	        bytHeader.writeByte(4);
-	        
-	        // Raw header of VBR mepgs
-	        var bytVBitRate:ByteArray = new ByteArray(); 
-	        bytVBitRate.writeByte(12);
-	        
-	        // Offset position used during data access
-	        var offsetPos:int = 0;
-	        
-	        // Read 4 bytes intervals from the header until 
-	        // we can determine the file is a valid mpeg
-	        do
-	        {
-	            ba.position = offsetPos;
-	            ba.readBytes( bytHeader, 0, 4 );
-	            offsetPos++;
-	            // Set the new data chunck
-	            loadMP3Header( bytHeader );
-	        }
-	        while( !isValidHeader && ( ba.position != ba.length ) );
-	        
-	        // If the byte array position is equal to the length, 
-	        // we've read the entire file and it's NOT a valid mpeg!
-	        if( ba.position != ba.length )
-	        {
-	            offsetPos += 3;
+			var offsetPos:int = 0;
+			 	
+	        var chunk:ByteArray = new ByteArray();
+	        	chunk.writeByte(4);
+	        try
+			{  
+		        do
+		        {
+		            bytes.position = offsetPos;
+		            bytes.readBytes( chunk, 0, 4 );
+		            offsetPos++;
+		            loadNextChunk( chunk );
+		        }
+		        while( !isValidHeader && ( bytes.position != bytes.length ) );
+	        		
+		        if( bytes.position == bytes.length ) {
+		        	
+		      		throw new  IOError('File not found or file is not an mp3 or the data is corrupt' );
+		      	}
+
+		        offsetPos += 3;
 				
-				// Determine the mpeg version of the file
-	            if(versionIndex == 3) 
-	                offsetPos += (modeIndex == 3)? 
-	                17 : // MPEG Version 1
-	                32;    
-	            
-	            else 
-	                offsetPos += (modeIndex == 3)?	
-	                9  : // MPEG Version 2.0 or 2.5
-	                17;   
-	               
-	            
-	            // Determine if the mpeg employs variable bitrate encoding (VBR)
-	            ba.position = offsetPos;
-	            ba.readBytes(bytVBitRate,0,12);
-	            _isVarBitRate = loadVBRHeader(bytVBitRate);
-				
-	            return populatedResults();
+				if(versionIndex == 3) 
+		        	offsetPos += (modeIndex == 3)? // found MPEG Version 1
+		        		17 : 32;    
+		        else 
+		            offsetPos += (modeIndex == 3)?	// found MPEG Version 2.0 or 2.5
+		            	9 : 17;   
+		               
+		        	
+		        bytes.position = offsetPos;
+		        
+		        // 'Xing' is key in the header data indicating vbr
+		        var xingBytes:ByteArray = new ByteArray();
+		        	xingBytes.writeByte(12);
+		        	
+		        bytes.readBytes( xingBytes, 0, 12);
+		        
+		        _isCBR = isCBRHeader( xingBytes );
+
+		       	var	result:Object = {};
+					result.bitRate 			= bitRate;
+					result.channelMode 		= channelMode;
+					result.channels			= channels;
+					result.isCBR 			= isCBR;
+					result.isVBR 			= isVBR;
+					result.lengthBytes 		= lengthBytes;
+					result.lengthFormatted 	= lengthFormatted;
+					result.lengthSeconds 	= lengthSeconds;
+					result.mpegLayer 		= mpegLayer;
+					result.mpegVersion 		= mpegVersion;
+					result.frameCount 		= frameCount;
+					result.sampleRate 		= sampleRate;
+					
+				return result;
+	        
+	        }catch( e:Error ){
+	        	bytes.position = 0;
+	        	
+	        	// decodes to human readable if we loaded an html/xml/text or 404 page, etc
+	        	var utf:String = bytes.readUTFBytes( bytes.bytesAvailable ); 
+	        	
+	        	handleError( e, { utf:utf } );
 	        }
-	        
-	        // NOT a valid MP3 file!
-	        throw new Error('Invalid file type or corrupt mpeg header' );
-	        
 	        return null
-	        
 	    }
-	    /**
-		 * Populates the MP3InfoVO value object with 
-		 * the mpeg properties from the analysis
-		 * 
-		 */	
-		internal static function populatedResults():MP3InfoVO
-		{
-			var resultVO:MP3InfoVO 		= new MP3InfoVO();
-			
-			resultVO.bitRate 			= bitRate;
-			resultVO.channelMode 		= channelMode;
-			resultVO.channels			= channels;
-			resultVO.isCBR 				= isCBR;
-			resultVO.isVBR 				= isVBR;
-			resultVO.lengthBytes 		= lengthBytes;
-			resultVO.lengthFormatted 	= lengthFormatted;
-			resultVO.lengthSeconds 		= lengthSeconds;
-			resultVO.mpegLayer 			= mpegLayer;
-			resultVO.mpegVersion 		= mpegVersion;
-			resultVO.frameCount 		= frameCount;
-			resultVO.sampleRate 		= sampleRate;
-			
-			return resultVO;
-		}
-		
 	   /**
 	    * 
-	    * Determines if the loaded data is a valid mpeg header
+	    * Determines if our '_currentChunk' of data is the valid 
+	    * mpeg header as we loop our bytes through looking for it. 
 	    * 
+	    * @return true when a valid header is found
 	    */ 
 		internal static function get isValidHeader():Boolean 
 	    {
@@ -351,80 +329,92 @@ package com.fastforwardthinker.util.mp3
 	                ((layerIndex     &    3)!=   0) && 
 	                ((bitrateIndex   &   15)!=   0) &&
 	                ((bitrateIndex   &   15)!=  15) &&
-	                ((sampleRateIndex &    3)!=   3) &&
-	                ((emphasisIndex  &    3)!=   2)    );
+	                ((sampleRateIndex&    3)!=   3) &&
+	                ((emphasisIndex  &    3)!=   2) );
 	    }
 	   /**
 	    * 
 	    * Loads a chuck of mpeg header data into the private 
-	    * '_bitHeader' variable by bit-shifting the raw data
+	    * '_currentChunk' variable by bit-shifting the raw data
 	    * 
-	    * @param ba the source header byte array
+	    * this thing is quite interesting, it works as follows:
+	    * 
+	    * ba[0] = 00000011
+	    * ba[1] = 00001100
+	    * ba[2] = 00110000
+	    * ba[3] = 11000000
+	    * 
+	    * the operator '<< n' means bit-shift to left by 'n' bits:
+	    * 
+	    * 00000011 << 24 = 	00000011000000000000000000000000
+	    * 00001100 << 16 =         	000011000000000000000000
+	    * 00110000 << 8  =                 	0011000000000000
+	    * 11000000       =                         	11000000
+	    * 				 +__________________________________
+	    * 					00000011000011000011000011000000
+	    * 
+	    * @param bytes 
 	    */
-	    internal static function loadMP3Header( ba:ByteArray ):void
+	    internal static function loadNextChunk( bytes:ByteArray ):void
 	    {
-	        // this thing is quite interesting, it works as follows:
-	        // c[0] = 00000011
-	        // c[1] = 00001100
-	        // c[2] = 00110000
-	        // c[3] = 11000000
-	        // the operator << means that we'll move the bits in that direction
-	        // 00000011 << 24 = 00000011000000000000000000000000
-	        // 00001100 << 16 =         000011000000000000000000
-	        // 00110000 << 24 =                 0011000000000000
-	        // 11000000       =                         11000000
-	        //                +_________________________________
-	        //                  00000011000011000011000011000000
-	        
-	        _bitHeader = ( 	( (ba[0] & 255) << 24 ) | 
-	        			 	( (ba[1] & 255) << 16 ) | 
-	        			 	( (ba[2] & 255) <<  8 ) | 
-	        			 	( (ba[3] & 255) )	); 
+	        _currentChunk = (((bytes[0] & 255) << 24 ) | 
+	        			 	( (bytes[1] & 255) << 16 ) | 
+	        			 	( (bytes[2] & 255) <<  8 ) | 
+	        			 	( (bytes[3] & 255))); 
 	    }
 	   /**
 	    * 
 	    * Determines if the mpeg employs varible bit rate encoding
 	    * 
-	    * @return boolean true when VBR is used, false when CBR is used
+	    * The first 4 bytes of variable bit-rate mpegs will parse to 
+	    * the utf string 'Xing', a reference to the group responsible 
+	    * for adding variable bitrate mpeg encoding to the mpeg standard
+	    * 
+	    * Xing
+	    * 88  == X
+	    * 105 == i
+	    * 110 == n
+	    * 103 == g
+	    * 
+	    * @return boolean true when CBR is used, false when VBR is used
 	    * @param ba the source header byte array
 	    */	 
-	    internal static function loadVBRHeader( ba:ByteArray ):Boolean
+	    internal static function isCBRHeader( bytes:ByteArray ):Boolean
 	    {
-	        // The first 4 bytes of variable bit-rate mpegs will parse to 
-	        // the utf string 'Xing', a reference to the group responsible 
-	        // for adding variable bitrate mpeg encoding to the mpeg standard
-	    	// 88  == X
-	    	// 105 == i
-	    	// 110 == n
-	    	// 103 == g
-	        if( ba[0] == 88  && ba[1] == 105 && 
-	            ba[2] == 110 && ba[3] == 103 )
-	        {
-	            var flags:int = (   ((ba[4] & 255) << 24) | 
-	            				 	((ba[5] & 255) << 16) | 
-	            				 	((ba[6] & 255) <<  8) | 
-	            				 	((ba[7] & 255) )   );
-	            				 
-	            if( (flags & 0x0001) == 1 )
-	            {
-	                _vbrFrames = (	((ba[8] & 255) << 24) | 
-	                				((ba[9] & 255) << 16) | 
-	                				((ba[10] & 255) << 8) | 
-	                				((ba[11] & 255))	);
-	                return true;
-	            }
-	            else
-	            {
-	                _vbrFrames = -1;
-	                return true; // It's a VBR mpeg
-	            }
-	        }
-	        return false; // NOT a VBR mpeg
+	    	try{
+			        if( bytes[0] == 88  && bytes[1] == 105 && 
+			            bytes[2] == 110 && bytes[3] == 103 )
+			        {
+			            var flags:int = (   ((bytes[4] & 255) << 24) | 
+			            				 	((bytes[5] & 255) << 16) | 
+			            				 	((bytes[6] & 255) <<  8) | 
+			            				 	((bytes[7] & 255) )   );
+			            				 
+			            if( (flags & 0x0001) == 1 )
+			            {
+			                _vbrFrames = (	((bytes[8] & 255) << 24) | 
+			                				((bytes[9] & 255) << 16) | 
+			                				((bytes[10] & 255) << 8) | 
+			                				((bytes[11] & 255))	);
+			                return false; 
+			            }
+			            else
+			            {
+			                _vbrFrames = -1;
+			                return false;
+			            }
+			        }
+			   }catch( e:Error ){ //possibly corrupt data
+			   		
+			   		handleError( e );
+			   }
+			   
+			   return true; 
 	    }
 		
 		
 		//------------------
-		// INTERNAL GETTERS
+		// INTERNAL GETTERS - Edit at your own risk!
 	    //------------------
 	    
 	    /**
@@ -454,14 +444,14 @@ package com.fastforwardthinker.util.mp3
 		*/	
 	    internal static function get isVBR():Boolean
 	    {
-	    	return _isVarBitRate;
+	    	return !_isCBR;
 	    }
 	    /**
 		* @return Boolean is the file constant bit rate?
 		*/	
 	    internal static function get isCBR():Boolean
 	    {
-	    	return !_isVarBitRate;
+	    	return _isCBR;
 	    }
 	   /**
 		* @return int the length, in bytes, of the file
@@ -477,7 +467,7 @@ package com.fastforwardthinker.util.mp3
 	     */
 	    internal static function get mpegVersion():Number 
 	    {
-	        return MPEG_VERSIONS[ versionIndex ];
+	        return MpegVersions.list[ versionIndex ];
 	    }
 		/**
 	     * 
@@ -506,7 +496,7 @@ package com.fastforwardthinker.util.mp3
 	        }
 	        else
 	        {
-	            return MPEG_BITRATES[ (versionIndex & 1) ][ layerIndex-1 ][ bitrateIndex ];
+	            return MpegBitRates.list[ (versionIndex & 1) ][ layerIndex-1 ][ bitrateIndex ];
 	        }
 	    }
 		/**
@@ -516,7 +506,7 @@ package com.fastforwardthinker.util.mp3
 	     */
 	    internal static function get sampleRate():int 
 	    {
-	        return MPEG_SAMPLE_RATES[ versionIndex ][ sampleRateIndex ];
+	        return MpegSampleRates.list[ versionIndex ][ sampleRateIndex ];
 	    }
 		/**
 	     * 
@@ -549,9 +539,9 @@ package com.fastforwardthinker.util.mp3
 	            case 1:
 	            case 2:
 	            default:
-	                return 2;
+	                return 2; // stereo, joint stereo or dual
 	            case 3:
-	                return 1;
+	                return 1; // mono
 	        }
 	     }
 	    
@@ -584,24 +574,51 @@ package com.fastforwardthinker.util.mp3
 	            return _vbrFrames;
 	    }
 	    
+	    //-------------------
+		// EventDispatcher
+		//-------------------
+	    
+	    /**
+		 * addEventListener
+		 */
+		public static function addEventListener( type:String, listener:Function, useCapture:Boolean=false, priority:int=0, useWeakReference:Boolean=false):void {
+      			if ( _dispatcher == null ) { _dispatcher = new EventDispatcher(); }
+      			_dispatcher.addEventListener( type, listener, useCapture, priority, useWeakReference);
+      	}
+      	/**
+		 * removeEventListener
+		 */
+    	public static function removeEventListener( type:String, listener:Function, useCapture:Boolean=false):void {
+      			if ( _dispatcher == null){ return; }
+      			_dispatcher.removeEventListener(type, listener, useCapture);
+      	}
+      	/**
+		 * dispatchEvent
+		 */
+    	public static function dispatchEvent(event:Event):void {
+      			if ( _dispatcher == null ){ return; }
+      			_dispatcher.dispatchEvent(event);
+      	}
+      	
+      	
 		//--------------
 		// Index getters
 		//--------------
 		
-	    internal static function get versionIndex() :int 	{ 	return ((_bitHeader>>19) & 3);  	} // mpeg version
-	    internal static function get layerIndex():int    	{ 	return ((_bitHeader>>17) & 3);  	} // mpeg layer
-	    internal static function get modeIndex():int     	{ 	return ((_bitHeader>>6) & 3);  		} // channel mode
-	    internal static function get bitrateIndex():int  	{ 	return ((_bitHeader>>12) & 15); 	} // mpeg bit rate
-	    internal static function get sampleRateIndex():int	{ 	return ((_bitHeader>>10) & 3);  	} // mpeg sample rate
-	    internal static function get emphasisIndex():int 	{ 	return ( _bitHeader & 3 );  		}
-	    internal static function get frameSync():int  		{	return ((_bitHeader>>21) & 2047); 	}
+	    internal static function get versionIndex() :int 	{ 	return ((_currentChunk>>19) & 3);  	} // mpeg version
+	    internal static function get layerIndex():int    	{ 	return ((_currentChunk>>17) & 3);  	} // mpeg layer
+	    internal static function get modeIndex():int     	{ 	return ((_currentChunk>>6) & 3);  		} // channel mode
+	    internal static function get bitrateIndex():int  	{ 	return ((_currentChunk>>12) & 15); 	} // mpeg bit rate
+	    internal static function get sampleRateIndex():int	{ 	return ((_currentChunk>>10) & 3);  	} // mpeg sample rate
+	    internal static function get emphasisIndex():int 	{ 	return ( _currentChunk & 3 );  		}
+	    internal static function get frameSync():int  		{	return ((_currentChunk>>21) & 2047); 	}
 	    
-	    internal static function get paddingBit():int    	{ 	return ((_bitHeader>>9) & 1);  		} // not yet utlized
-		internal static function get privateBit():int    	{ 	return ((_bitHeader>>8) & 1);  		} // not yet utlized
-	    internal static function get modeExtIndex():int  	{ 	return ((_bitHeader>>4) & 3);  		} // not yet utlized
-	    internal static function get copyrightBit():int   	{ 	return ((_bitHeader>>3) & 1);  		} // not yet utlized
-	    internal static function get orginalBit():int    	{ 	return ((_bitHeader>>2) & 1);  		} // not yet utlized
-	    internal static function get protectionBit():int 	{ 	return ((_bitHeader>>16) & 1);  	} // not yet utlized
+	    internal static function get paddingBit():int    	{ 	return ((_currentChunk>>9) & 1);  		} // not yet utlized
+		internal static function get privateBit():int    	{ 	return ((_currentChunk>>8) & 1);  		} // not yet utlized
+	    internal static function get modeExtIndex():int  	{ 	return ((_currentChunk>>4) & 3);  		} // not yet utlized
+	    internal static function get copyrightBit():int   	{ 	return ((_currentChunk>>3) & 1);  		} // not yet utlized
+	    internal static function get orginalBit():int    	{ 	return ((_currentChunk>>2) & 1);  		} // not yet utlized
+	    internal static function get protectionBit():int 	{ 	return ((_currentChunk>>16) & 1);  	} // not yet utlized
 	    
 	
 	}//end class
